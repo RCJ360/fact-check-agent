@@ -36,6 +36,7 @@ def extract_text(pdf_file):
         )
 
         text = ""
+
         for page in doc:
             text += page.get_text()
 
@@ -45,8 +46,10 @@ def extract_text(pdf_file):
         st.error(f"Invalid PDF File: {e}")
         return ""
 
+
 # Extract Factual Claims from Text
 def extract_claims(text):
+
     prompt = f"""
 Extract factual claims from the text.
 
@@ -69,12 +72,18 @@ Example:
 Text:
 {text[:15000]}
 """
-    response = model.generate_content(prompt)
+
+    try:
+        response = model.generate_content(prompt)
+
+    except Exception:
+        st.error("Gemini API quota exceeded. Please try again later.")
+        return []
 
     raw_text = response.text.strip()
 
-    #st.write("Gemini Response:")
-    #st.code(raw_text)
+    # st.write("Gemini Response:")
+    # st.code(raw_text)
 
     try:
         cleaned = raw_text.replace("```json", "")
@@ -87,14 +96,17 @@ Text:
         st.error(f"Claim Extraction Error: {e}")
         return []
 
+
 # Verify Claim Using Web Search and Gemini
 def verify_claim(claim):
+
     search_results = tavily.search(
         query=claim,
         max_results=5
     )
 
     evidence = ""
+
     for result in search_results["results"]:
         evidence += result["content"] + "\n"
 
@@ -117,27 +129,52 @@ Status:
 Reason:
 Correct Fact:
 """
-    response = model.generate_content(prompt)
-    return response.text
+
+    try:
+        response = model.generate_content(prompt)
+        return response.text
+
+    except Exception:
+        return """
+Status: Error
+
+Reason:
+Gemini API quota exceeded. Please try again later.
+
+Correct Fact:
+Not available.
+"""
+
 
 # Process Uploaded PDF
 if uploaded_file:
 
+    # Read PDF Content
     with st.spinner("Reading PDF..."):
         text = extract_text(uploaded_file)
 
+    if text == "":
+        st.stop()
+
     st.success("PDF Loaded")
 
+    # Extract Claims
     with st.spinner("Extracting Claims..."):
         claims = extract_claims(text)
 
+    if not claims:
+        st.warning("No factual claims found or the API quota has been exceeded.")
+        st.stop()
+
+    # Display Extracted Claims
     st.subheader("Claims Found")
     st.write(claims)
 
+    # Store Results for Summary Table
     results_summary = []
 
     st.subheader("Fact Check Results")
-    
+
     # Verify Each Claim
     for claim in claims:
 
@@ -153,12 +190,14 @@ if uploaded_file:
             status = "⚠️ Inaccurate"
         elif "Status: False" in result:
             status = "❌ False"
+        elif "Status: Error" in result:
+            status = "⚠️ API Limit Reached"
         else:
             status = "❓ Unknown"
 
-        correct_fact = ""
-        
         # Extract Corrected Fact
+        correct_fact = ""
+
         if "Correct Fact:" in result:
             correct_fact = result.split("Correct Fact:")[-1].strip()
 
@@ -169,6 +208,7 @@ if uploaded_file:
             "Correct Fact": correct_fact
         })
 
+        # Display Detailed Analysis
         st.markdown(f"### {status}")
 
         st.write("**Claim:**")
@@ -177,6 +217,7 @@ if uploaded_file:
         st.write("**Analysis:**")
         st.info(result)
 
+    # Display Summary Table
     st.markdown("---")
     st.subheader("Summary Table")
     st.table(results_summary)
